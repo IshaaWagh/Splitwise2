@@ -13,7 +13,6 @@ import {
   Check,
   Share2,
   MessageCircle,
-} from "lucide-react"
   Trash2,
   X,
 } from "lucide-react"
