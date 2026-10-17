@@ -5,8 +5,17 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { formatCurrency, formatDate, getInitials } from "@/lib/utils"
 import AddExpenseModal from "@/components/add-expense-modal"
-import EditExpenseModal from "@/components/edit-expense-modal"
-import { ArrowLeft, Copy, Plus, Check,Pencil } from "lucide-react"
+import {
+  ArrowLeft,
+  Copy,
+  Plus,
+  Check,
+  Share2,
+  MessageCircle,
+  Trash2,
+  X,
+} from "lucide-react"
+
 import { useSocket } from "@/hooks/use-socket"
 
 const CATEGORY_ICONS: Record<string, string> = {
@@ -32,6 +41,8 @@ export default function GroupPageClient({
 const [copied, setCopied] = useState(false)
 const [expenses, setExpenses] = useState<any[]>(group.expenses)
 const [toast, setToast] = useState<string | null>(null)
+const [expenseToDelete, setExpenseToDelete] = useState<any | null>(null)
+const [deletingExpenseId, setDeletingExpenseId] = useState<string | null>(null)
 
 const router = useRouter()
 const socket = useSocket()
@@ -46,19 +57,12 @@ useEffect(() => {
     setToast(`${addedBy} just added "${expense.title}"`)
     setTimeout(() => setToast(null), 3000)
   })
-  socket.on("expense:updated", ({ expense, updatedBy }) => {
-  setExpenses((prev) =>
-    prev.map((existingExpense) =>
-      existingExpense.id === expense.id
-        ? expense
-        : existingExpense
-    )
+  socket.on("expense:deleted", ({ expenseId, deletedBy }) => {
+  setExpenses(prev =>
+    prev.filter(expense => expense.id !== expenseId)
   )
 
-  setToast(
-    `${updatedBy} updated "${expense.title}"`
-  )
-
+  setToast(`${deletedBy} deleted an expense`)
   setTimeout(() => setToast(null), 3000)
 
   router.refresh()
@@ -67,16 +71,91 @@ useEffect(() => {
   return () => {
     socket.emit("leave-group", group.id)
     socket.off("expense:added")
-    socket.off("expense:updated")
+    socket.off("expense:deleted")
   }
 }, [socket, group.id])
 
-  function copyInvite() {
-    navigator.clipboard.writeText(inviteCode)
+async function deleteExpense() {
+  if (!expenseToDelete) return
+
+  setDeletingExpenseId(expenseToDelete.id)
+
+  try {
+    const response = await fetch(
+      `/api/groups/${group.id}/expenses/${expenseToDelete.id}`,
+      {
+        method: "DELETE",
+      }
+    )
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(
+        data.error ?? "Failed to delete expense"
+      )
+    }
+
+    setExpenses((prev) =>
+      prev.filter(
+        (expense) => expense.id !== expenseToDelete.id
+      )
+    )
+
+    setExpenseToDelete(null)
+
+    setToast("Expense deleted successfully")
+    setTimeout(() => setToast(null), 3000)
+
+    router.refresh()
+  } catch (error: any) {
+    alert(error.message)
+  } finally {
+    setDeletingExpenseId(null)
+  }
+}
+
+function getInviteLink() {
+  return `${window.location.origin}/join/${inviteCode}`
+}
+
+async function copyInvite() {
+  const inviteLink = getInviteLink()
+
+  await navigator.clipboard.writeText(inviteLink)
+
   setCopied(true)
   setTimeout(() => setCopied(false), 2000)
-  }
+}
 
+function shareOnWhatsApp() {
+  const inviteLink = getInviteLink()
+
+  const message = `Join my Splitwise group! ${inviteLink}`
+
+  window.open(
+    `https://wa.me/?text=${encodeURIComponent(message)}`,
+    "_blank"
+  )
+}
+
+async function shareInvite() {
+  const inviteLink = getInviteLink()
+
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: `Join ${group.name}`,
+        text: "Join my Splitwise group!",
+        url: inviteLink,
+      })
+    } catch (error) {
+      // User cancelled the share dialog
+    }
+  } else {
+    await copyInvite()
+  }
+}
   // Build clear settle-up suggestions
   
   // "Ishaa owes Mrunal ₹500" or "Mrunal owes Ishaa ₹2000"
@@ -250,24 +329,21 @@ async function markAsPaid(toUserId: string, amount: number) {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {expenses.map((expense: any) => {
-  const paidByMe =
-    expense.paidById === currentUserId
+  const paidByMe = expense.paidById === currentUserId
 
   const currentMember = group.members.find(
-    (member: any) =>
-      member.userId === currentUserId
+    (member: any) => member.userId === currentUserId
   )
 
   const isGroupAdmin =
     currentMember?.role === "admin" ||
     group.createdById === currentUserId
 
-  const canEdit =
+  const canDelete =
     paidByMe || isGroupAdmin
 
   const myShareSplit = expense.splits?.find(
-    (s: any) =>
-      s.userId === currentUserId
+    (s: any) => s.userId === currentUserId
   )
                 const myShare = myShareSplit?.amount ?? 0
                 const isSettled = myShareSplit?.isSettled ?? false
@@ -300,7 +376,7 @@ async function markAsPaid(toUserId: string, amount: number) {
                       </p>
                     </div>
 
-                    {/* Amount + Edit */}
+                    {/* Amount + Delete */}
 <div
   style={{
     display: "flex",
@@ -335,8 +411,7 @@ async function markAsPaid(toUserId: string, amount: number) {
       <p
         style={{
           fontSize: 12,
-          color:
-            "rgba(255,255,255,0.25)",
+          color: "rgba(255,255,255,0.25)",
           margin: "2px 0 0",
         }}
       >
@@ -355,30 +430,28 @@ async function markAsPaid(toUserId: string, amount: number) {
     )}
   </div>
 
-  {canEdit && (
+  {canDelete && (
     <button
       onClick={(event) => {
         event.stopPropagation()
-        setExpenseToEdit(expense)
+        setExpenseToDelete(expense)
       }}
-      title="Edit expense"
-      aria-label={`Edit ${expense.title}`}
+      title="Delete expense"
+      aria-label={`Delete ${expense.title}`}
       style={{
         width: 32,
         height: 32,
         borderRadius: 8,
-        border:
-          "1px solid rgba(129,140,248,0.2)",
-        background:
-          "rgba(129,140,248,0.08)",
-        color: "#818cf8",
+        border: "1px solid rgba(251,113,133,0.2)",
+        background: "rgba(251,113,133,0.07)",
+        color: "#fb7185",
         cursor: "pointer",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
       }}
     >
-      <Pencil size={14} />
+      <Trash2 size={14} />
     </button>
   )}
 </div>
@@ -604,27 +677,251 @@ async function markAsPaid(toUserId: string, amount: number) {
                 {copied ? <Check size={13} /> : <Copy size={13} />}
               </button>
             </div>
-            <button onClick={copyInvite} style={{
-              width: "100%", padding: "9px 0", borderRadius: 9, fontSize: 13, fontWeight: 500,
-              border: "1px solid rgba(99,102,241,0.3)", background: "rgba(99,102,241,0.1)",
-              color: "#818cf8", cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s",
-            }}>
-              {copied ? "✓ Copied!" : "Copy invite link"}
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+
+  <button
+    onClick={copyInvite}
+    style={{
+      width: "100%",
+      padding: "9px 0",
+      borderRadius: 9,
+      fontSize: 13,
+      fontWeight: 500,
+      border: "1px solid rgba(99,102,241,0.3)",
+      background: "rgba(99,102,241,0.1)",
+      color: "#818cf8",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      transition: "all 0.2s",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 7,
+    }}
+  >
+    {copied ? <Check size={14} /> : <Copy size={14} />}
+    {copied ? "Copied!" : "Copy invite link"}
+  </button>
+
+  <button
+    onClick={shareOnWhatsApp}
+    style={{
+      width: "100%",
+      padding: "9px 0",
+      borderRadius: 9,
+      fontSize: 13,
+      fontWeight: 500,
+      border: "1px solid rgba(37,211,102,0.25)",
+      background: "rgba(37,211,102,0.08)",
+      color: "#4ade80",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 7,
+    }}
+  >
+    <MessageCircle size={14} />
+    Share on WhatsApp
+  </button>
+
+  <button
+    onClick={shareInvite}
+    style={{
+      width: "100%",
+      padding: "9px 0",
+      borderRadius: 9,
+      fontSize: 13,
+      fontWeight: 500,
+      border: "1px solid rgba(255,255,255,0.1)",
+      background: "rgba(255,255,255,0.04)",
+      color: "rgba(255,255,255,0.65)",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 7,
+    }}
+  >
+    <Share2 size={14} />
+    Share invite
+  </button>
+
+</div>
           </div>
         </div>
       </div>
-      {expenseToEdit && (
-  <EditExpenseModal
-    group={group}
-    expense={expenseToEdit}
-    currentUserId={currentUserId}
-    onClose={() => setExpenseToEdit(null)}
-    onSuccess={() => {
-      setExpenseToEdit(null)
-      router.refresh()
+      {expenseToDelete && (
+  <div
+    onMouseDown={(event) => {
+      if (
+        event.target === event.currentTarget &&
+        !deletingExpenseId
+      ) {
+        setExpenseToDelete(null)
+      }
     }}
-  />
+    style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0,0,0,0.72)",
+      backdropFilter: "blur(6px)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 20,
+      zIndex: 1000,
+    }}
+  >
+    <div
+      style={{
+        width: "100%",
+        maxWidth: 420,
+        background: "#111118",
+        border: "1px solid rgba(255,255,255,0.1)",
+        borderRadius: 18,
+        padding: 22,
+        boxShadow: "0 24px 70px rgba(0,0,0,0.5)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 18,
+        }}
+      >
+        <div
+          style={{
+            width: 42,
+            height: 42,
+            borderRadius: 11,
+            background: "rgba(251,113,133,0.1)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fb7185",
+          }}
+        >
+          <Trash2 size={19} />
+        </div>
+
+        <button
+          onClick={() => setExpenseToDelete(null)}
+          disabled={!!deletingExpenseId}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            border: "1px solid rgba(255,255,255,0.08)",
+            background: "rgba(255,255,255,0.04)",
+            color: "rgba(255,255,255,0.5)",
+            cursor: deletingExpenseId
+              ? "not-allowed"
+              : "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <X size={15} />
+        </button>
+      </div>
+
+      <h2
+        style={{
+          margin: "0 0 8px",
+          fontSize: 19,
+          fontWeight: 700,
+          color: "#fff",
+        }}
+      >
+        Delete expense?
+      </h2>
+
+      <p
+        style={{
+          margin: "0 0 8px",
+          fontSize: 14,
+          lineHeight: 1.6,
+          color: "rgba(255,255,255,0.55)",
+        }}
+      >
+        Are you sure you want to delete{" "}
+        <strong style={{ color: "#fff" }}>
+          "{expenseToDelete.title}"
+        </strong>
+        ?
+      </p>
+
+      <p
+        style={{
+          margin: "0 0 20px",
+          fontSize: 12,
+          lineHeight: 1.5,
+          color: "rgba(255,255,255,0.3)",
+        }}
+      >
+        This will remove the expense and its
+        split details and recalculate the
+        group's balances.
+      </p>
+
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+        }}
+      >
+        <button
+          onClick={() => setExpenseToDelete(null)}
+          disabled={!!deletingExpenseId}
+          style={{
+            flex: 1,
+            padding: "10px 14px",
+            borderRadius: 10,
+            border: "1px solid rgba(255,255,255,0.1)",
+            background: "rgba(255,255,255,0.04)",
+            color: "rgba(255,255,255,0.7)",
+            cursor: deletingExpenseId
+              ? "not-allowed"
+              : "pointer",
+            fontFamily: "inherit",
+            fontWeight: 600,
+          }}
+        >
+          Cancel
+        </button>
+
+        <button
+          onClick={deleteExpense}
+          disabled={!!deletingExpenseId}
+          style={{
+            flex: 1,
+            padding: "10px 14px",
+            borderRadius: 10,
+            border: "none",
+            background:
+              "linear-gradient(135deg,#fb7185,#e11d48)",
+            color: "#fff",
+            cursor: deletingExpenseId
+              ? "not-allowed"
+              : "pointer",
+            fontFamily: "inherit",
+            fontWeight: 700,
+            opacity: deletingExpenseId ? 0.6 : 1,
+          }}
+        >
+          {deletingExpenseId
+            ? "Deleting..."
+            : "Delete Expense"}
+        </button>
+      </div>
+    </div>
+  </div>
 )}
 
       {showExpenseModal && (
