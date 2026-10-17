@@ -37,6 +37,7 @@ export default function GroupPageClient({
   group, currentUserId, balances, totalSpend, myBalance, inviteCode
 }: Props) {
  const [showExpenseModal, setShowExpenseModal] = useState(false)
+ const [expenseToEdit, setExpenseToEdit] = useState<any | null>(null)
 const [copied, setCopied] = useState(false)
 const [expenses, setExpenses] = useState<any[]>(group.expenses)
 const [toast, setToast] = useState<string | null>(null)
