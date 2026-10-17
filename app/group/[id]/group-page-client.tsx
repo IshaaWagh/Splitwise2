@@ -40,6 +40,7 @@ export default function GroupPageClient({
 }: Props) {
  const [showExpenseModal, setShowExpenseModal] = useState(false)
  const [selectedExpense, setSelectedExpense] = useState<any | null>(null)
+ const [expenseToEdit, setExpenseToEdit] = useState<any | null>(null)
 const [copied, setCopied] = useState(false)
 const [expenses, setExpenses] = useState<any[]>(group.expenses)
 const [toast, setToast] = useState<string | null>(null)
